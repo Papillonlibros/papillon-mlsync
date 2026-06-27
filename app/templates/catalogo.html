@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="toolbar">
+  {% include "_estado.html" %}
+  <button class="btn-primary" hx-post="/ingest" hx-target="#estado" hx-swap="outerHTML">
+    🔄 Actualizar ahora
+  </button>
+</div>
+
+<form class="filtros" method="get" action="/catalogo">
+  <input type="text" name="q" value="{{ q }}" placeholder="Buscar título, autor, EAN o código…">
+  <select name="filtro">
+    <option value="" {{ 'selected' if filtro=='' }}>Todos</option>
+    <option value="stock" {{ 'selected' if filtro=='stock' }}>Con stock</option>
+    <option value="publicable" {{ 'selected' if filtro=='publicable' }}>Publicables (stock + EAN real)</option>
+    <option value="publicados" {{ 'selected' if filtro=='publicados' }}>Marcados para publicar</option>
+  </select>
+  <button type="submit">Filtrar</button>
+  <span class="total">{{ "{:,}".format(total).replace(',','.') }} resultados</span>
+</form>
+
+<div x-data="catalogoML()">
+
+  <!-- Barra de acción de publicación -->
+  <div class="pub-bar" x-show="sel.length > 0" x-cloak>
+    <span><b x-text="sel.length"></b> seleccionados</span>
+    {% if conectado %}
+      <button class="btn-publicar" @click="publicar()" :disabled="job.running">
+        <span x-show="!job.running">🚀 Publicar seleccionados (en pausa)</span>
+        <span x-show="job.running">Publicando… <span x-text="job.done"></span>/<span x-text="job.total"></span></span>
+      </button>
+    {% else %}
+      <span class="aviso-mini">⚠️ Conectá Mercado Libre para publicar (<a href="/ml">Conexión ML</a>)</span>
+    {% endif %}
+    <button class="btn-light" @click="limpiar()">Limpiar selección</button>
+  </div>
+
+  <!-- Progreso / resultados -->
+  <div class="job-panel" x-show="job.total > 0" x-cloak>
+    <div class="job-prog"><div class="job-bar" :style="`width:${job.total ? (job.done/job.total*100) : 0}%`"></div></div>
+    <div class="job-stats">
+      ✅ <span x-text="job.ok"></span> OK · ❌ <span x-text="job.fail"></span> con error
+      <template x-if="!job.running && job.total>0"><span class="job-fin"> · Terminado. <a href="" @click.prevent="location.reload()">Refrescar lista</a></span></template>
+    </div>
+    <template x-for="r in job.results.filter(x=>!x.ok)" :key="r.codint">
+      <div class="job-err">❌ <b x-text="r.titulo"></b> — <span x-text="r.error"></span></div>
+    </template>
+  </div>
+
+  <table class="catalogo">
+    <thead>
+      <tr>
+        <th><input type="checkbox" @change="toggleAll($event)" title="Seleccionar todos los de esta página"></th>
+        <th>Portada</th><th>Código</th><th>EAN / ISBN</th><th>Título</th><th>Autor</th>
+        <th class="num">Precio</th><th class="num">Stock</th><th>Estado ML</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      {% set real = r.ean and (r.ean.startswith('978') or r.ean.startswith('979')) %}
+      {% set selectable = real and r.stock_disp > 0 and not r.ml_item_id %}
+      <tr>
+        <td>
+          {% if selectable %}
+            <input type="checkbox" value="{{ r.codint }}" @change="toggle('{{ r.codint }}')" :checked="sel.includes('{{ r.codint }}')">
+          {% endif %}
+        </td>
+        <td class="td-tapa">
+          {% if r.ean %}<img class="tapa" src="/tapa/{{ r.ean }}" loading="lazy" alt="" onerror="this.style.visibility='hidden'">{% endif %}
+        </td>
+        <td class="mono">{{ r.codint }}</td>
+        <td class="mono"><span class="{{ 'ean-real' if real else 'ean-int' }}">{{ r.ean or '—' }}</span></td>
+        <td>{{ r.titulo }}</td>
+        <td class="autor">{{ r.autor or '—' }}</td>
+        <td class="num">{{ "{:,.2f}".format(r.precio).replace(',','@').replace('.',',').replace('@','.') }}</td>
+        <td class="num {{ 'sin-stock' if r.stock_disp <= 0 }}">{{ r.stock_disp }}</td>
+        <td>
+          {% if r.ml_item_id %}
+            <a class="badge {{ r.ml_status }}" href="https://articulo.mercadolibre.com.ar/{{ r.ml_item_id | replace('MLA','MLA-') }}-_JM" target="_blank">
+              {{ r.ml_status or 'publicado' }}
+            </a>
+          {% elif not real %}
+            <span class="muted">sin ISBN</span>
+          {% elif r.stock_disp <= 0 %}
+            <span class="muted">sin stock</span>
+          {% else %}
+            <span class="muted">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      {% if not rows %}<tr><td colspan="9" class="vacio">No hay artículos para este filtro.</td></tr>{% endif %}
+    </tbody>
+  </table>
+</div>
+
+<div class="paginacion">
+  {% if page > 1 %}<a href="/catalogo?q={{ q }}&filtro={{ filtro }}&page={{ page-1 }}">‹ Anterior</a>{% endif %}
+  <span>Página {{ page }} de {{ pages }}</span>
+  {% if page < pages %}<a href="/catalogo?q={{ q }}&filtro={{ filtro }}&page={{ page+1 }}">Siguiente ›</a>{% endif %}
+</div>
+
+<script>
+function catalogoML() {
+  return {
+    sel: [],
+    job: { running:false, total:0, done:0, ok:0, fail:0, results:[] },
+    _timer: null,
+    toggle(codint) {
+      const i = this.sel.indexOf(codint);
+      if (i === -1) this.sel.push(codint); else this.sel.splice(i, 1);
+    },
+    limpiar() {
+      this.sel = [];
+      this.$root.querySelectorAll('tbody input[type=checkbox]').forEach(b => b.checked = false);
+    },
+    toggleAll(ev) {
+      const boxes = this.$root.querySelectorAll('tbody input[type=checkbox]');
+      if (ev.target.checked) {
+        boxes.forEach(b => { if (!this.sel.includes(b.value)) this.sel.push(b.value); b.checked = true; });
+      } else {
+        this.limpiar();
+      }
+    },
+    async publicar() {
+      if (!this.sel.length) return;
+      const resp = await fetch('/ml/publicar-lote', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ codints: this.sel })
+      });
+      if (!resp.ok) { const e = await resp.json(); alert(e.error || 'Error'); return; }
+      this.job = { running:true, total:this.sel.length, done:0, ok:0, fail:0, results:[] };
+      this.sel = [];
+      this._poll();
+    },
+    _poll() {
+      this._timer = setInterval(async () => {
+        const s = await (await fetch('/ml/publicar-estado')).json();
+        this.job = s;
+        if (!s.running) { clearInterval(this._timer); }
+      }, 1500);
+    }
+  }
+}
+</script>
+
+{% endblock %}

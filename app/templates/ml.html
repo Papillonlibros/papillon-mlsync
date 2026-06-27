@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+
+{% if msg %}<div class="aviso ok">✅ {{ msg }}</div>{% endif %}
+{% if err %}<div class="aviso error">⚠️ {{ err }}</div>{% endif %}
+
+<h2>Conexión con Mercado Libre</h2>
+
+{% if conectado and info %}
+  <div class="card conectado">
+    <div class="big">🟢 Conectado</div>
+    <table class="kv">
+      <tr><td>Usuario</td><td><b>{{ info.nick }}</b></td></tr>
+      <tr><td>ID de vendedor</td><td>{{ info.id }}</td></tr>
+      <tr><td>Sitio</td><td>{{ info.site }}</td></tr>
+      {% if info.email %}<tr><td>Email</td><td>{{ info.email }}</td></tr>{% endif %}
+    </table>
+    <a class="btn-primary" href="/ml/conectar">🔁 Reconectar / cambiar cuenta</a>
+  </div>
+{% else %}
+  <div class="card">
+    <div class="big">⚪ No conectado</div>
+    <p>App ID: <span class="mono">{{ app_id }}</span></p>
+    <p><b>Paso 1.</b> En el panel de Mercado Libre Developers, asegurate de que la
+       <i>Redirect URI</i> de la app sea exactamente:</p>
+    <p class="mono box">{{ redirect_uri }}</p>
+
+    <p><b>Paso 2.</b> Hacé clic para autorizar con tu cuenta de Papillon:</p>
+    <a class="btn-primary big-btn" href="/ml/conectar" target="_blank">🔗 Autorizar en Mercado Libre</a>
+
+    <details class="manual">
+      <summary>¿La pantalla de redirección quedó en error? Pegá el código acá</summary>
+      <p>Tras autorizar, el navegador va a una URL como
+         <span class="mono">{{ redirect_uri }}?code=TG-xxxx...</span>.
+         Copiá esa URL completa (o solo el <span class="mono">code</span>) y pegala:</p>
+      <form method="post" action="/ml/codigo">
+        <input type="text" name="code" placeholder="Pegá la URL completa o el código TG-..." required>
+        <button type="submit">Conectar</button>
+      </form>
+    </details>
+  </div>
+{% endif %}
+
+{% endblock %}

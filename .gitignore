@@ -1,0 +1,26 @@
+# Secretos y credenciales
+.env
+*.env
+
+# Base de datos propia y datos derivados
+mlsync.db
+mlsync.db-wal
+mlsync.db-shm
+catalogo.csv
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+
+# Logs y temporales
+*.log
+
+# Config local de Claude Code (permisos por máquina)
+.claude/settings.local.json

@@ -1,0 +1,12 @@
+<div id="estado" hx-get="/estado" hx-trigger="load delay:5s"
+     hx-swap="outerHTML" class="estado {{ 'running' if status.running else '' }}">
+  {% if status.running %}
+    <span class="dot"></span> Actualizando catálogo desde el ERP…
+  {% elif status.last_error %}
+    ⚠️ Error en la última ingesta: {{ status.last_error }}
+  {% elif status.last_ok %}
+    ✅ Última actualización: {{ status.last_ok.replace('T',' ') }} · {{ "{:,}".format(arts|default(0,true)|int).replace(',','.') }} artículos en base
+  {% else %}
+    Sin datos todavía. Apretá «Actualizar ahora».
+  {% endif %}
+</div>

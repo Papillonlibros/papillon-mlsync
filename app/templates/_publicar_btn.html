@@ -1,0 +1,5 @@
+<button class="pub-btn {{ 'on' if publicar else '' }}"
+        hx-post="/publicar" hx-vals='{"codint": "{{ codint }}"}'
+        hx-swap="outerHTML">
+  {{ '✓ Publicar' if publicar else '+ Publicar' }}
+</button>
