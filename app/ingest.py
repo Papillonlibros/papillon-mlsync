@@ -50,6 +50,31 @@ def _s(v):
     return v.strip() if isinstance(v, str) else (v if v is not None else "")
 
 
+def _ean13_valido(e):
+    """True si e es un EAN-13 numerico con digito verificador correcto."""
+    if len(e) != 13 or not e.isdigit():
+        return False
+    suma = sum((1 if i % 2 == 0 else 3) * int(d) for i, d in enumerate(e[:12]))
+    return (10 - suma % 10) % 10 == int(e[12])
+
+
+def _ean_desde_codigo(codigo):
+    """Reconstruye el EAN-13 desde ARTICU.CODIGO.
+
+    En La Red del Libro el EAN del catalogo no esta en STKCOD sino en
+    ARTICU.CODIGO: 10 digitos = el EAN-13 sin el prefijo '978'
+    (p. ej. CODIGO '0194007672' -> EAN '9780194007672'). Se acepta solo si
+    el resultado es un EAN-13 con digito verificador valido; asi se descartan
+    los CODIGO que son codigos internos y no ISBN. Devuelve '' si no aplica.
+    """
+    c = _s(codigo)
+    if len(c) == 10 and c.isdigit():
+        ean = "978" + c
+        if _ean13_valido(ean):
+            return ean
+    return ""
+
+
 def _log(tipo, inicio, fin, registros, estado, detalle):
     conn = db.get_conn()
     try:
@@ -99,6 +124,11 @@ def run_ingest(tipo="manual"):
             p, of, fm = precio.get(c, (0, 0, None))
             cant, resv = stock.get(c, (0, 0))
             ean, isbn, pro = codigos.get(c, ("", "", ""))
+            # Fallback La Red: si STKCOD no trae EAN, reconstruir desde ARTICU.CODIGO
+            if not ean:
+                ean = _ean_desde_codigo(a["CODIGO"])
+                if ean and not isbn:
+                    isbn = ean
             disp = int((cant or 0) - (resv or 0))
             rows.append((
                 _s(c), ean, isbn, _s(a["DESCRI"]), _s(a["AUTOR1"]),
