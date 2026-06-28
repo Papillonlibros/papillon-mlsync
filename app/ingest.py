@@ -7,10 +7,27 @@ import os
 import threading
 import datetime
 import dbfread
+from dbfread import FieldParser
 
 from . import config, db
 
 _lock = threading.Lock()
+
+
+class _TolerantParser(FieldParser):
+    """Parser de DBF tolerante a campos corruptos.
+
+    Algunos DBF del ERP (p. ej. La Red del Libro) tienen registros sueltos con
+    bytes basura en campos numéricos o de fecha. El parser estándar aborta toda
+    la ingesta ante el primer valor ilegible; este devuelve None en su lugar
+    (el resto del código ya trata None como 0/"" vía `or 0` y `_s`).
+    """
+
+    def parse(self, field, data):
+        try:
+            return super().parse(field, data)
+        except (ValueError, TypeError, ArithmeticError):
+            return None
 
 # Estado en memoria para mostrar en la UI
 status = {
@@ -21,7 +38,8 @@ status = {
 }
 
 _KW = dict(load=False, ignore_missing_memofile=True,
-           encoding=config.DBF_ENCODING, char_decode_errors="replace")
+           encoding=config.DBF_ENCODING, char_decode_errors="replace",
+           parserclass=_TolerantParser)
 
 
 def _dbf(nombre):
