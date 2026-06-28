@@ -121,14 +121,15 @@ def run_ingest(tipo="manual"):
             if c not in precio:
                 precio[c] = (r["PRECIO"] or 0, r["OFERTA"] or 0, r["FECMOD"])
 
-        # 2) Reservas por articulo. El stock TOTAL se toma de ARTICU.STKTOT
-        #    (mas completo que STOCK_: en La Red ~13.500 articulos tienen
-        #    STKTOT>0 vs ~7.000 con fila en STOCK_, y coinciden donde ambos
-        #    existen). STOCK_ aporta solo lo reservado (sumando sus filas, una
-        #    por ubicacion).
-        reservado = {}
+        # 2) Stock fisico en deposito (STOCK_). CANTID = stock firme, que el
+        #    mapeo del ERP documenta como "fuente de verdad" del stock.
+        #    (NO usar ARTICU.STKTOT: es un cache desincronizado.) Los buckets
+        #    de consignacion CANT_0/1/2 quedan en evaluacion -> ver notas del
+        #    proyecto antes de sumarlos.
+        stock = {}
         for r in _dbf("STOCK_.DBF"):
-            reservado[r["CODINT"]] = reservado.get(r["CODINT"], 0) + (r["RESERV"] or 0)
+            cant, resv = stock.get(r["CODINT"], (0, 0))
+            stock[r["CODINT"]] = (cant + (r["CANTID"] or 0), resv + (r["RESERV"] or 0))
 
         # 3) Codigos (EAN/ISBN) - primer registro con EAN no vacio
         codigos = {}
@@ -143,22 +144,18 @@ def run_ingest(tipo="manual"):
         for a in _dbf("ARTICU.DBF"):
             c = a["CODINT"]
             p, of, fm = precio.get(c, (0, 0, None))
-            try:
-                total = int(a["STKTOT"] or 0)
-            except (TypeError, ValueError):
-                total = 0
-            resv = int(reservado.get(c, 0) or 0)
+            cant, resv = stock.get(c, (0, 0))
             ean, isbn, pro = codigos.get(c, ("", "", ""))
             # Fallback La Red: si STKCOD no trae EAN, reconstruir desde ARTICU.CODIGO
             if not ean:
                 ean = _ean_desde_codigo(a["CODIGO"])
                 if ean and not isbn:
                     isbn = ean
-            disp = max(0, total - resv)
+            disp = max(0, int(cant or 0) - int(resv or 0))
             rows.append((
                 _s(c), ean, isbn, _s(a["DESCRI"]), _s(a["AUTOR1"]),
                 float(p or 0), float(of or 0),
-                total, resv, disp,
+                int(cant or 0), int(resv or 0), disp,
                 _s(a["MARCA_"]), a["GRUPO_"], a["LINEA_"], a["RUBRO_"],
                 _s(a["ESTADO"]), _s(a["DISCON"]), pro or _s(a["PROCOD"]),
                 fm.isoformat() if fm else None, now,
