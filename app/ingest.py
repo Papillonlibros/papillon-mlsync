@@ -50,28 +50,45 @@ def _s(v):
     return v.strip() if isinstance(v, str) else (v if v is not None else "")
 
 
+def _ean13_check(d12):
+    """Digito verificador (str) de los 12 primeros digitos de un EAN-13."""
+    suma = sum((1 if i % 2 == 0 else 3) * int(c) for i, c in enumerate(d12))
+    return str((10 - suma % 10) % 10)
+
+
 def _ean13_valido(e):
     """True si e es un EAN-13 numerico con digito verificador correcto."""
-    if len(e) != 13 or not e.isdigit():
+    return len(e) == 13 and e.isdigit() and _ean13_check(e[:12]) == e[12]
+
+
+def _isbn10_valido(c):
+    """True si c (10 caracteres) es un ISBN-10 con verificador valido (0-9 o X)."""
+    if len(c) != 10 or not c[:9].isdigit():
         return False
-    suma = sum((1 if i % 2 == 0 else 3) * int(d) for i, d in enumerate(e[:12]))
-    return (10 - suma % 10) % 10 == int(e[12])
+    chk = c[9]
+    if not (chk.isdigit() or chk in "Xx"):
+        return False
+    val = 10 if chk in "Xx" else int(chk)
+    suma = sum((i + 1) * int(c[i]) for i in range(9)) + 10 * val
+    return suma % 11 == 0
 
 
 def _ean_desde_codigo(codigo):
-    """Reconstruye el EAN-13 desde ARTICU.CODIGO.
+    """Deriva el EAN-13 desde ARTICU.CODIGO.
 
     En La Red del Libro el EAN del catalogo no esta en STKCOD sino en
-    ARTICU.CODIGO: 10 digitos = el EAN-13 sin el prefijo '978'
-    (p. ej. CODIGO '0194007672' -> EAN '9780194007672'). Se acepta solo si
-    el resultado es un EAN-13 con digito verificador valido; asi se descartan
-    los CODIGO que son codigos internos y no ISBN. Devuelve '' si no aplica.
+    ARTICU.CODIGO, que guarda el ISBN-10 del libro (p. ej. '0545010225').
+    Se convierte a EAN-13: 978 + los 9 digitos del nucleo + verificador
+    recalculado. Se acepta solo si CODIGO es un ISBN-10 valido (o, en su
+    defecto, si '978'+CODIGO ya forma un EAN-13 valido); asi se descartan los
+    codigos internos que no son ISBN. Devuelve '' si no aplica.
     """
     c = _s(codigo)
-    if len(c) == 10 and c.isdigit():
-        ean = "978" + c
-        if _ean13_valido(ean):
-            return ean
+    if _isbn10_valido(c):
+        d12 = "978" + c[:9]
+        return d12 + _ean13_check(d12)
+    if len(c) == 10 and c.isdigit() and _ean13_valido("978" + c):
+        return "978" + c
     return ""
 
 
@@ -104,10 +121,14 @@ def run_ingest(tipo="manual"):
             if c not in precio:
                 precio[c] = (r["PRECIO"] or 0, r["OFERTA"] or 0, r["FECMOD"])
 
-        # 2) Stock
-        stock = {}
+        # 2) Reservas por articulo. El stock TOTAL se toma de ARTICU.STKTOT
+        #    (mas completo que STOCK_: en La Red ~13.500 articulos tienen
+        #    STKTOT>0 vs ~7.000 con fila en STOCK_, y coinciden donde ambos
+        #    existen). STOCK_ aporta solo lo reservado (sumando sus filas, una
+        #    por ubicacion).
+        reservado = {}
         for r in _dbf("STOCK_.DBF"):
-            stock[r["CODINT"]] = (r["CANTID"] or 0, r["RESERV"] or 0)
+            reservado[r["CODINT"]] = reservado.get(r["CODINT"], 0) + (r["RESERV"] or 0)
 
         # 3) Codigos (EAN/ISBN) - primer registro con EAN no vacio
         codigos = {}
@@ -122,18 +143,22 @@ def run_ingest(tipo="manual"):
         for a in _dbf("ARTICU.DBF"):
             c = a["CODINT"]
             p, of, fm = precio.get(c, (0, 0, None))
-            cant, resv = stock.get(c, (0, 0))
+            try:
+                total = int(a["STKTOT"] or 0)
+            except (TypeError, ValueError):
+                total = 0
+            resv = int(reservado.get(c, 0) or 0)
             ean, isbn, pro = codigos.get(c, ("", "", ""))
             # Fallback La Red: si STKCOD no trae EAN, reconstruir desde ARTICU.CODIGO
             if not ean:
                 ean = _ean_desde_codigo(a["CODIGO"])
                 if ean and not isbn:
                     isbn = ean
-            disp = int((cant or 0) - (resv or 0))
+            disp = max(0, total - resv)
             rows.append((
                 _s(c), ean, isbn, _s(a["DESCRI"]), _s(a["AUTOR1"]),
                 float(p or 0), float(of or 0),
-                int(cant or 0), int(resv or 0), disp,
+                total, resv, disp,
                 _s(a["MARCA_"]), a["GRUPO_"], a["LINEA_"], a["RUBRO_"],
                 _s(a["ESTADO"]), _s(a["DISCON"]), pro or _s(a["PROCOD"]),
                 fm.isoformat() if fm else None, now,
